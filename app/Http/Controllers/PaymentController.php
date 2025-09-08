@@ -32,6 +32,9 @@ class PaymentController extends Controller
             'amount' => 100 * 100,
             'currency' => 'usd',
             'automatic_payment_methods' => ['enabled' => true],
+            // Pour les cautions
+            // 'payment_method_types' => ['card'],
+            // 'capture_method' => 'manual',
             'customer' => $user->stripe_customer_id,
             'description' => 'Activation Premium',
         ]);
