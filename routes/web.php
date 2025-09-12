@@ -16,9 +16,11 @@ use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
     return view('welcome');
-});
+})->name('welcome');
 
-Route::get('/test', [PaymentController::class, 'index']);
+// Feature 1 : Paiement avec prix dynamique, récuperation du prix depuis la DB, utilisation du webhook pour des
+// verifications de payement effectif
+Route::post('/feature-1', [PaymentController::class, 'index']);
 Route::post('/stripe/webhook', [PaymentController::class, 'webhook']);
-Route::view('/success', 'success');
-Route::view('/cancel', 'cancel');
+Route::view('/success', 'success')->name('checkout.success');
+Route::view('/cancel', 'cancel')->name('checkout.cancel');

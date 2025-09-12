@@ -25,12 +25,12 @@
 
     @php
     @endphp
-    <h2>Paiement de l'abonnement Prémium 100 USD</h2>
+    <h2>Paiement de {{$price}} € pour le produit : {{$produit}}</h2>
 
     <form id="payment-form">
         <div id="card-element"></div>
         <div id="card-errors"></div>
-        <button type="submit" id="submit">Payer</button>
+        <button class="bg-indigo-600 text-white font-semibold rounded-xl hover:bg-indigo-700 transition" type="submit" id="submit">Payer</button>
     </form>
 
     <script>
