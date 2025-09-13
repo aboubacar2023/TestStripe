@@ -9,10 +9,21 @@ class Caution extends Model
 {
     use HasFactory;
     protected $fillable = [
-        'stripe_payment_intent_id',
         'user_id',
-        'amount',
+        'stripe_session_id',
+        'stripe_payment_intent_id',
+        'montant',
         'status',
-        'trial_ends_at'
+        'start_date',
+        'end_date',
     ];
+
+    protected $casts = [
+        'start_date' => 'date',
+        'end_date'   => 'date',
+    ];
+
+    public function user() { 
+        return $this->belongsTo(User::class); 
+    }
 }

@@ -13,11 +13,13 @@ return new class extends Migration
     {
         Schema::create('cautions', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('user_id')->constrained();
-            $table->string('stripe_payment_intent_id');
-            $table->integer('amount');
-            $table->string('status');
-            $table->dateTime('trial_ends_at'); 
+            $table->foreignId('user_id')->constrained()->onDelete('cascade');
+            $table->string('stripe_session_id')->nullable();
+            $table->string('stripe_payment_intent_id')->nullable()->unique();
+            $table->integer('montant');
+            $table->enum('status', ['pending','captured','canceled','failed'])->default('pending');
+            $table->date('start_date')->nullable();
+            $table->date('end_date')->nullable(); 
             $table->timestamps();
         });
     }

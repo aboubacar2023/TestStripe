@@ -2,7 +2,7 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Abonnement;
+use App\Models\AchatProduit;
 use App\Models\Produit;
 use App\Models\User;
 use Illuminate\Http\Request;
@@ -60,6 +60,10 @@ class PaymentController extends Controller
             'customer' => $user->stripe_customer_id,
             'payment_intent_data' => [
                 'description' => 'Achat de ' . $quantite . ' ' . $produit->nom_produit,
+                'metadata' => [
+                'produit_id' => $produit->id,
+                'quantite'   => $quantite
+        ]
             ],
             'success_url' => route('checkout.success'),
             'cancel_url' => route('welcome'),
@@ -90,15 +94,18 @@ class PaymentController extends Controller
 
             $user = User::where('stripe_customer_id', $customerId)->first();
 
+            // Récupération du produit_id depuis le metadata
+            $produitId = $paymentIntent->metadata->produit_id;
+            $quantite  = $paymentIntent->metadata->quantite;
+
+
             if ($user) {
-                Abonnement::firstOrCreate([
+                AchatProduit::firstOrCreate([
                     'user_id' => $user->id,
                     'stripe_payment_intent_id' => $paymentIntentId,
                     'stripe_customer_id' => $customerId,
-                    'status' => 'active',
-                    'plan' => 'premium',
-                    'start_date' => now(),
-                    'end_date' => now()->addMonth(),
+                    'produit_id' => $produitId,
+                    'quantite' => $quantite,
                 ]);
             }
         }
