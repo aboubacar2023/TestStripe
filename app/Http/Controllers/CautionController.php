@@ -5,29 +5,29 @@ namespace App\Http\Controllers;
 use App\Models\Caution;
 use App\Models\Produit;
 use App\Models\User;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Stripe\Checkout\Session;
 use Stripe\Customer;
 use Stripe\PaymentIntent;
+use Stripe\PaymentMethod;
 use Stripe\Stripe;
 use Stripe\Webhook;
 
 class CautionController extends Controller
 {
-    public function inscription()
+    public function location()
     {
-        $produits = Produit::all(); // adapte si tu as pagination
-        return view('caution.inscription', compact('produits'));
+        return view('caution.location');
     }
 
-    // Création de la session Stripe (caution / pré-autorisation)
-    public function startEssaie()
+    // Création de la session Stripe
+    public function startLocation()
     {
-
         Stripe::setApiKey(config('services.stripe.secret'));
 
-        $user = User::first();
+        $user = User::where('id', 3)->first();
 
         // Ensure Stripe customer
         if (!$user->stripe_customer_id) {
@@ -35,172 +35,130 @@ class CautionController extends Controller
                 'name' => $user->name,
                 'email' => $user->email,
             ]);
+
             $user->stripe_customer_id = $cus->id;
             $user->save();
         }
 
-        // Create Checkout Session with manual capture (caution)
         $checkoutSession = Session::create([
             'payment_method_types' => ['card'],
-            'line_items' => [[
-                'price_data' => [
-                    'currency' => 'eur',
-                    'unit_amount' => 100*100,
-                    'product_data' => [
-                        'name' => 'Essaie Gratuit',
+            'line_items' => [
+                [
+                    'price_data' => [
+                        'currency' => 'eur',
+                        'product_data' => [
+                            'name' => "Location d'une voiture",
+                            'description' => "Locaton d'une voiture",
+                        ],
+                        'unit_amount' => 400 * 100,
                     ],
+                    'quantity' => 1,
                 ],
-                'quantity' => 1,
-            ]],
+            ],
             'mode' => 'payment',
             'customer' => $user->stripe_customer_id,
             'payment_intent_data' => [
-                'capture_method' => 'manual',
-                'description' => 'Essai gratuit pour 100 €'
+                'setup_future_usage' => 'off_session',
+                'description' => "Locaton d'une voiture",
             ],
-            'success_url' => route('essaie'),
-            'cancel_url' => route('essaie.inscription'),
+            'success_url' => route('success'),
+            'cancel_url' => route('location'),
         ]);
 
-        // Store a caution row. stripe_payment_intent_id may be null at this moment.
-        Caution::create([
-            'user_id' => $user->id,
-            'stripe_session_id' => $checkoutSession->id,
-            'stripe_payment_intent_id' => $checkoutSession->payment_intent,
-            'montant' => 100,
-            'status' => 'pending',
-            'start_date' => now(),
-            'end_date' => now()->addDays(5),
-        ]);
-
-        // redirect to Stripe Checkout
+        // Ici, on peut rediriger directement vers Stripe
         return redirect($checkoutSession->url);
     }
 
-    // Vue de suivi / page après retour (success/cancel) : montre l'état de la caution actuelle
-    public function showEssaie()
+    public function index()
     {
-        $user = User::first();
-        $caution = Caution::where('user_id', $user->id)
-            ->orderByDesc('created_at')
-            ->first();
-
-        return view('caution.suivie-essaie', compact('caution'));
+        $cautions = Caution::with('user')->latest()->get();
+        return view('caution.admin', compact('cautions'));
     }
 
-    // L'utilisateur confirme l'essai -> on capture
-    public function confirmerEssaie(Caution $caution)
+    public function capture(Request $request, Caution $caution)
     {
-
         Stripe::setApiKey(config('services.stripe.secret'));
-        try {
-            $pi = PaymentIntent::retrieve($caution->stripe_payment_intent_id);
-            $pi->capture();
-            $caution->update(['status' => 'captured']);
-            return redirect()->route('checkout.success');
-        } catch (\Exception $e) {
-            Log::error('Capture error: '.$e->getMessage());
-            return redirect()->view('erreur');
-        }
+
+        $amount = $request->amount * 100;
+
+        $intent = PaymentIntent::retrieve($caution->payment_intent_id);
+        $intent->capture(['amount_to_capture' => $amount]);
+
+        $caution->status = 'capture';
+        $caution->montant_paye = $request->amount;
+        $caution->save();
+
+        Log::info("Stripe capture response", $intent->toArray());
+
+        return back()->with('success', 'Caution capturée !');
     }
 
-    // L'utilisateur annule -> on annule la caution
-    public function cancelEssaie(Caution $caution)
+    public function annule(Caution $caution)
     {
-
         Stripe::setApiKey(config('services.stripe.secret'));
-        try {
-            $pi = PaymentIntent::retrieve($caution->stripe_payment_intent_id);
-            $pi->cancel();
-            $caution->update(['status' => 'canceled']);
-            return redirect()->route('checkout.cancel');
-        } catch (\Exception $e) {
-            Log::error('Cancel error: '.$e->getMessage());
-            return redirect()->view('erreur');
-        }
+
+        $intent = PaymentIntent::retrieve($caution->payment_intent_id);
+        $intent->cancel();
+
+        $caution->status = 'libere';
+        $caution->save();
+
+        return back()->with('success', 'Caution libérée !');
     }
 
     // Webhook Stripe
     public function webhook(Request $request)
     {
-        $endpoint_secret = env('STRIPE_WEBHOOK_SECRET');
+        Stripe::setApiKey(config('services.stripe.secret'));
+
         $payload = $request->getContent();
-        $sig_header = $request->header('Stripe-Signature');
+        $sigHeader = $request->header('Stripe-Signature');
+        $endpointSecret = config('services.stripe.webhook_secret');
 
         try {
-            $event = Webhook::constructEvent($payload, $sig_header, $endpoint_secret);
+            $event = Webhook::constructEvent($payload, $sigHeader, $endpointSecret);
         } catch (\Exception $e) {
-            Log::error('Webhook signature error: '.$e->getMessage());
-            return response()->json(['error' => $e->getMessage()], 400);
+            Log::error('Webhook error: ' . $e->getMessage());
+            return response('', 400);
         }
+        
 
-        // Handle relevant events
-        $type = $event->type;
-        $obj = $event->data->object;
+        if ($event->type === 'checkout.session.completed') {
+            $session = $event->data->object;
+            $customerId = $session->customer;
+            $paymentIntentId = $session->payment_intent;
 
-        if ($type === 'checkout.session.completed') {
-            // Session created / completed; link PI -> our caution row
-            $session = $obj;
-            $caution = Caution::where('stripe_session_id', $session->id)->first();
-            if ($caution) {
-                $caution->update([
-                    'stripe_payment_intent_id' => $session->payment_intent ?? $caution->stripe_payment_intent_id,
-                    'status' => 'pending',
+            try {
+                $pi = PaymentIntent::retrieve($paymentIntentId);
+                $paymentMethodId = $pi->payment_method;
+
+
+                $cautionAmount = 1000 * 100;
+
+                $cautionIntent = PaymentIntent::create([
+                    'amount' => $cautionAmount,
+                    'currency' => 'eur',
+                    'customer' => $customerId,
+                    'payment_method' => $paymentMethodId,
+                    'off_session' => true,
+                    'confirm' => true,
+                    'capture_method' => 'manual',
                 ]);
+
+                $user = User::where('stripe_customer_id', $customerId)->first();
+
+                Caution::create([
+                    'user_id' => $user->id,
+                    'payment_intent_id' => $cautionIntent->id,
+                    'montant' => $cautionAmount/100,
+                    'montant_paye' => 0,
+                    'status' => 'bloque',
+                ]);
+            } catch (\Exception $e) {
+                Log::error('Erreur création caution: ' . $e->getMessage());
             }
         }
 
-        if ($type === 'payment_intent.succeeded' || $type === 'payment_intent.captured') {
-            $pi = $obj;
-            $caution = Caution::where('stripe_payment_intent_id', $pi->id)->first();
-            if ($caution) { $caution->update(['status' => 'captured']); }
-        }
-
-        if ($type === 'payment_intent.canceled' || $type === 'payment_intent.payment_failed') {
-            $pi = $obj;
-            $caution = Caution::where('stripe_payment_intent_id', $pi->id)->first();
-            if ($caution) { $caution->update(['status' => 'canceled']); }
-        }
-
-        return response()->json(['received' => true]);
+        return response()->json(['status' => 'success']);
     }
-
-    // Back-office: lister toutes les cautions
-    public function adminIndex()
-    {
-        $cautions = Caution::orderByDesc('created_at')->paginate(25);
-        return view('caution.admin', compact('cautions'));
-    }
-
-    // Back-office capture
-    public function adminCapture(Caution $caution)
-    {
-        // middleware 'is_admin' protège cette route
-        Stripe::setApiKey(config('services.stripe.secret'));
-        try {
-            $pi = PaymentIntent::retrieve($caution->stripe_payment_intent_id);
-            $pi->capture();
-            $caution->update(['status' => 'captured']);
-            return redirect()->back()->with('success','Caution capturée.');
-        } catch (\Exception $e) {
-            Log::error('Admin capture error: '.$e->getMessage());
-            return redirect()->back()->with('error','Erreur capture : '.$e->getMessage());
-        }
-    }
-
-    // Back-office cancel
-    public function adminCancel(Caution $caution)
-    {
-        Stripe::setApiKey(config('services.stripe.secret'));
-        try {
-            $pi = PaymentIntent::retrieve($caution->stripe_payment_intent_id);
-            $pi->cancel();
-            $caution->update(['status' => 'canceled']);
-            return redirect()->back()->with('info','Caution annulée.');
-        } catch (\Exception $e) {
-            Log::error('Admin cancel error: '.$e->getMessage());
-            return redirect()->back()->with('error','Erreur annulation : '.$e->getMessage());
-        }
-    }
-
 }
